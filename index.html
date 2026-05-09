@@ -1,4 +1,4 @@
-﻿﻿<!doctype html>
+<!doctype html>
 <html lang="id" class="light">
   <head>
     <meta charset="UTF-8" />
@@ -521,6 +521,20 @@
                       class="inline-block px-3 py-1.5 rounded-lg bg-red-100 text-red-600 text-[9px] font-black uppercase mt-3 tracking-wider"
                     >
                       MENGHUBUNGKAN...
+                    </div>
+                    <div class="mt-3">
+                      <label class="inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                        <input
+                          id="toggle-location-check"
+                          type="checkbox"
+                          class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                          onchange="setLocationCheckEnabled(this.checked)"
+                        />
+                        Cek area sekolah
+                      </label>
+                      <p id="location-check-hint" class="text-[9px] text-slate-400 uppercase mt-2">
+                        Matikan untuk uji coba absen tanpa batas lokasi.
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -1194,6 +1208,25 @@
       window.lastPresenceState = null;
       window.hasAbsen = false;
       window.isInsideSchool = false;
+      window.locationCheckEnabled =
+        localStorage.getItem("smkn2_location_check_enabled") !== "false";
+      window.getEffectiveInsideSchool = function () {
+        return !window.locationCheckEnabled || window.isInsideSchool;
+      };
+      window.setLocationCheckEnabled = function (enabled) {
+        window.locationCheckEnabled = enabled;
+        localStorage.setItem(
+          "smkn2_location_check_enabled",
+          enabled ? "true" : "false",
+        );
+        window.updateLocationCheckUI();
+        updatePhotoFeatureState();
+        updateAbsenButtonState();
+      };
+      window.updateLocationCheckUI = function () {
+        const checkbox = document.getElementById("toggle-location-check");
+        if (checkbox) checkbox.checked = window.locationCheckEnabled;
+      };
       window.adminSelectedJurusan = "ALL";
       window.adminSelectedClass = "ALL";
       window.studentCatalog = { jurusan: [], classesByJurusan: {} };
@@ -1703,16 +1736,17 @@
         }
         const today = new Date().toLocaleDateString("id-ID");
         const hasPhotoToday = window.currentUser.attendancePhotoDay === today;
-        panel.classList.toggle("hidden", !window.isInsideSchool);
+        const effectiveInside = window.getEffectiveInsideSchool();
+        panel.classList.toggle("hidden", !effectiveInside);
 
-        if (window.isInsideSchool && hasPhotoToday) {
+        if (effectiveInside && hasPhotoToday) {
           badge.className =
             "inline-block px-3 py-2 rounded-xl bg-emerald-100 text-emerald-600 text-[10px] font-black uppercase tracking-wider";
           badge.innerText = "Foto wajah sudah siap";
           button.className =
             "block w-full py-4 rounded-2xl bg-emerald-500 text-white text-[10px] uppercase shadow-lg font-black tracking-widest cursor-pointer";
           button.innerText = "Ambil Ulang Foto Wajah";
-        } else if (window.isInsideSchool) {
+        } else if (effectiveInside) {
           badge.className =
             "inline-block px-3 py-2 rounded-xl bg-green-100 text-green-600 text-[10px] font-black uppercase tracking-wider";
           badge.innerText = "Kamera aktif di area sekolah";
@@ -1790,7 +1824,7 @@
         if (window.currentUser.role === "guru") {
           return false;
         }
-        if (!window.isInsideSchool) {
+        if (!window.getEffectiveInsideSchool()) {
           showNotification("Masuk area sekolah dulu untuk mengaktifkan kamera", "error");
           return false;
         }
@@ -2109,6 +2143,7 @@
         }
 
         updateUIVisuals();
+        window.updateLocationCheckUI();
         renderHistory();
         updateAbsenButtonState();
         startLiveClock();
@@ -2371,7 +2406,7 @@
 
       function handleAttendancePhoto(file) {
         if (window.currentUser.role === "guru") return;
-        if (!window.isInsideSchool || !window.userPos) {
+        if (!window.getEffectiveInsideSchool() || !window.userPos) {
           showNotification("Foto wajah hanya aktif saat berada di sekolah", "error");
           return;
         }
@@ -2482,7 +2517,7 @@
         );
         btn.classList.add("btn-premium");
 
-        if (window.currentUser.role === "siswa" && window.isInsideSchool && hasPhotoToday) {
+        if (window.currentUser.role === "siswa" && window.getEffectiveInsideSchool() && hasPhotoToday) {
           btn.classList.remove("hidden");
         }
       }
@@ -2493,53 +2528,53 @@
           return;
         }
         const dist = window.map.distance(window.userPos, [-7.4257, 111.0087]);
-        if (dist < 200) {
-          const hasPhotoToday =
-            window.currentUser.attendancePhotoDay ===
-            new Date().toLocaleDateString("id-ID");
-          if (!hasPhotoToday) {
-            showNotification("Ambil foto wajah dulu sebelum absen", "error");
-            return;
-          }
-          const now = new Date();
-          const late =
-            now.getHours() > 7 || (now.getHours() == 7 && now.getMinutes() > 0);
-
-          addHistoryLog(
-            "Absen masuk sekolah - " + (late ? "Terlambat" : "Tepat waktu"),
-          );
-          const activeUntil = Date.now() + 8 * 60 * 60 * 1000;
-          if (db && userSession && window.currentUser.role === "siswa") {
-            setDoc(
-              doc(
-                db,
-                "artifacts",
-                appId,
-                "public",
-                "data",
-                "attendance_reports",
-                String(window.currentUser.id),
-              ),
-              {
-                name: window.currentUser.name,
-                class: window.currentUser.class,
-                jurusan: window.currentUser.jurusan,
-                absenNo: window.currentUser.absenNo,
-                studentId: window.currentUser.id,
-                lat: window.userPos[0],
-                lng: window.userPos[1],
-                photo: window.currentUser.lastAttendancePhoto || "",
-                timestamp: Date.now(),
-                activeUntil,
-                status: "ACTIVE",
-              },
-            ).catch((error) => console.error(error));
-          }
-          showNotification("Berhasil absen. Status aktif selama 8 jam.", "success");
-          updateAbsenButtonState();
-        } else {
+        if (window.locationCheckEnabled && dist >= 200) {
           showNotification("Gagal! Anda di luar sekolah", "error");
+          return;
         }
+        const hasPhotoToday =
+          window.currentUser.attendancePhotoDay ===
+          new Date().toLocaleDateString("id-ID");
+        if (!hasPhotoToday) {
+          showNotification("Ambil foto wajah dulu sebelum absen", "error");
+          return;
+        }
+        const now = new Date();
+        const late =
+          now.getHours() > 7 || (now.getHours() == 7 && now.getMinutes() > 0);
+
+        addHistoryLog(
+          "Absen masuk sekolah - " + (late ? "Terlambat" : "Tepat waktu"),
+        );
+        const activeUntil = Date.now() + 8 * 60 * 60 * 1000;
+        if (db && userSession && window.currentUser.role === "siswa") {
+          setDoc(
+            doc(
+              db,
+              "artifacts",
+              appId,
+              "public",
+              "data",
+              "attendance_reports",
+              String(window.currentUser.id),
+            ),
+            {
+              name: window.currentUser.name,
+              class: window.currentUser.class,
+              jurusan: window.currentUser.jurusan,
+              absenNo: window.currentUser.absenNo,
+              studentId: window.currentUser.id,
+              lat: window.userPos[0],
+              lng: window.userPos[1],
+              photo: window.currentUser.lastAttendancePhoto || "",
+              timestamp: Date.now(),
+              activeUntil,
+              status: "ACTIVE",
+            },
+          ).catch((error) => console.error(error));
+        }
+        showNotification("Berhasil absen. Status aktif selama 8 jam.", "success");
+        updateAbsenButtonState();
       };
 
       function initMap() {
@@ -2598,10 +2633,10 @@
               // LOGIKA NOTIFIKASI OTOMATIS
               if (window.lastPresenceState === null) {
                 window.lastPresenceState = isInside;
-                if (!isInside) {
+                if (!isInside && window.locationCheckEnabled) {
                   showNotification("Anda di luar sekolah", "error");
                   addHistoryLog("Terdeteksi di luar sekolah");
-                } else {
+                } else if (isInside) {
                   showNotification(
                     "Anda berada di dalam area sekolah",
                     "success",
@@ -2610,11 +2645,12 @@
               } else if (window.lastPresenceState !== isInside) {
                 window.lastPresenceState = isInside;
                 if (isInside) {
-                  showNotification(
-                    "Anda berada di dalam area sekolah",
-                    "success",
-                  );
-                } else {
+                  if (window.locationCheckEnabled)
+                    showNotification(
+                      "Anda berada di dalam area sekolah",
+                      "success",
+                    );
+                } else if (window.locationCheckEnabled) {
                   showNotification("Anda di luar sekolah", "error");
                   addHistoryLog("Keluar area sekolah");
                 }
@@ -2622,26 +2658,29 @@
 
               const badge = document.getElementById("gps-status");
               const btnAbsen = document.getElementById("btn-absen");
+              const effectiveInside = window.getEffectiveInsideSchool();
 
               // UPDATE UI LOKAL
               if (window.currentUser.role === "siswa") {
-                if (isInside) {
+                if (!window.locationCheckEnabled) {
+                  badge.innerText = "MODE UJI COBA: CEK AREA SEKOLAH NONAKTIF";
+                  badge.className =
+                    "inline-block px-3 py-1.5 rounded-lg bg-amber-100 text-amber-600 text-[9px] font-black uppercase mb-2 tracking-wider";
+                } else if (effectiveInside) {
                   badge.innerText = "ANDA DI DALAM SEKOLAH";
                   badge.className =
                     "inline-block px-3 py-1.5 rounded-lg bg-green-100 text-green-600 text-[9px] font-black uppercase mb-2";
-
                 } else {
                   badge.innerText = "ANDA DI LUAR SEKOLAH";
                   badge.className =
                     "inline-block px-3 py-1.5 rounded-lg bg-red-100 text-red-600 text-[9px] font-black uppercase mb-2";
-
                 }
 
                 updateAbsenButtonState();
                 const today = new Date().toLocaleDateString("id-ID");
                 const hasPhotoToday = window.currentUser.attendancePhotoDay === today;
                 if (
-                  isInside &&
+                  effectiveInside &&
                   !hasPhotoToday &&
                   window.attendancePromptedDay !== today &&
                   !window.checkHasAbsenToday()
@@ -2653,7 +2692,7 @@
                   );
                 }
 
-                const myColor = isInside ? "#22c55e" : "#ef4444";
+                const myColor = effectiveInside ? "#22c55e" : "#ef4444";
                 const dot = L.divIcon({
                   html: `<div class="w-6 h-6 border-4 border-white rounded-full shadow-2xl scale-125" style="background-color: ${myColor}"></div>`,
                   className: "",
